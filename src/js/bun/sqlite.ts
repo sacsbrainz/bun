@@ -48,6 +48,8 @@ const constants = {
   SQLITE_PREPARE_NORMALIZE: 0x02,
   SQLITE_PREPARE_NO_VTAB: 0x04,
 
+  SQLITE_DESERIALIZE_READONLY: 0x00000004 /* Ok for sqlite3_deserialize() */,
+
   SQLITE_FCNTL_LOCKSTATE: 1,
   SQLITE_FCNTL_GET_LOCKPROXYFILE: 2,
   SQLITE_FCNTL_SET_LOCKPROXYFILE: 3,
@@ -103,6 +105,7 @@ class Statement {
       case 0: {
         this.get = this.#getNoArgs;
         this.all = this.#allNoArgs;
+        this.iterate = this.#iterateNoArgs;
         this.values = this.#valuesNoArgs;
         this.run = this.#runNoArgs;
         break;
@@ -110,6 +113,7 @@ class Statement {
       default: {
         this.get = this.#get;
         this.all = this.#all;
+        this.iterate = this.#iterate;
         this.values = this.#values;
         this.run = this.#run;
         break;
@@ -121,6 +125,7 @@ class Statement {
 
   get;
   all;
+  iterate;
   values;
   run;
   isFinalized = false;
@@ -152,6 +157,12 @@ class Statement {
 
   #allNoArgs() {
     return this.#raw.all();
+  }
+
+  *#iterateNoArgs() {
+    for (let res = this.#raw.iterate(); res; res = this.#raw.iterate()) {
+      yield res;
+    }
   }
 
   #valuesNoArgs() {
@@ -203,6 +214,22 @@ class Statement {
       : this.#raw.all(...args);
   }
 
+  *#iterate(...args) {
+    if (args.length === 0) return yield* this.#iterateNoArgs();
+    var arg0 = args[0];
+    // ["foo"] => ["foo"]
+    // ("foo") => ["foo"]
+    // (Uint8Array(1024)) => [Uint8Array]
+    // (123) => [123]
+    let res =
+      !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
+        ? this.#raw.iterate(args)
+        : this.#raw.iterate(...args);
+    for (; res; res = this.#raw.iterate()) {
+      yield res;
+    }
+  }
+
   #values(...args) {
     if (args.length === 0) return this.#valuesNoArgs();
     var arg0 = args[0];
@@ -242,6 +269,10 @@ class Statement {
     return this.#raw.finalize(...args);
   }
 
+  *[Symbol.iterator]() {
+    yield* this.#iterateNoArgs();
+  }
+
   [Symbol.dispose]() {
     if (!this.isFinalized) {
       this.finalize();
@@ -255,6 +286,7 @@ class Database {
     if (typeof filenameGiven === "undefined") {
     } else if (typeof filenameGiven !== "string") {
       if (isTypedArray(filenameGiven)) {
+        let deserializeFlags = 0;
         if (options && typeof options === "object") {
           if (options.strict) {
             this.#internalFlags |= kStrictFlag;
@@ -263,13 +295,17 @@ class Database {
           if (options.safeIntegers) {
             this.#internalFlags |= kSafeIntegersFlag;
           }
+
+          if (options.readonly) { 
+            deserializeFlags |= constants.SQLITE_DESERIALIZE_READONLY;
+          }
         }
 
         this.#handle = Database.#deserialize(
           filenameGiven,
-          typeof options === "object" && options
-            ? !!options.readonly
-            : ((options | 0) & constants.SQLITE_OPEN_READONLY) != 0,
+          this.#internalFlags,
+          deserializeFlags
+
         );
         this.filename = ":memory:";
 
@@ -356,16 +392,23 @@ class Database {
     return SQL.serialize(this.#handle, optionalName || "main");
   }
 
-  static #deserialize(serialized, isReadOnly = false) {
+  static #deserialize(serialized, openFlags, deserializeFlags) {
     if (!SQL) {
       initializeSQL();
     }
 
-    return SQL.deserialize(serialized, isReadOnly);
+    return SQL.deserialize(serialized, openFlags, deserializeFlags);
   }
 
-  static deserialize(serialized, isReadOnly = false) {
-    return new Database(serialized, isReadOnly ? constants.SQLITE_OPEN_READONLY : 0);
+  static deserialize(serialized, options: boolean | { readonly?: boolean; strict?: boolean; safeIntegers?: boolean } = false) {
+    if (typeof options === "boolean") {
+      // Maintain backward compatibility with existing API
+      return new Database(serialized, { readonly: options });
+    } else if (options && typeof options === "object") {
+      return new Database(serialized, options);
+    } else {
+      return new Database(serialized, 0);
+    }
   }
 
   [Symbol.dispose]() {

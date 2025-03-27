@@ -14,6 +14,9 @@
 #include "JSURLSearchParams.h"
 #include "JSDOMFormData.h"
 #include <JavaScriptCore/JSCallbackObject.h>
+#include "JSCookie.h"
+#include "JSCookieMap.h"
+
 namespace Bun {
 
 using namespace JSC;
@@ -144,6 +147,14 @@ JSValue BunInjectedScriptHost::getInternalProperties(VM& vm, JSGlobalObject* exe
                 return array;
             }
 
+            if (auto* formData = jsDynamicCast<JSDOMFormData*>(value)) {
+                auto* array = constructEmptyArray(exec, nullptr);
+                constructDataProperties(vm, exec, array, WebCore::getInternalProperties(vm, exec, formData));
+                RETURN_IF_EXCEPTION(scope, {});
+                return array;
+            }
+
+        } else if (type == JSAsJSONType) {
             if (auto* params = jsDynamicCast<JSURLSearchParams*>(value)) {
                 auto* array = constructEmptyArray(exec, nullptr);
                 constructDataProperties(vm, exec, array, WebCore::getInternalProperties(vm, exec, params));
@@ -151,9 +162,16 @@ JSValue BunInjectedScriptHost::getInternalProperties(VM& vm, JSGlobalObject* exe
                 return array;
             }
 
-            if (auto* formData = jsDynamicCast<JSDOMFormData*>(value)) {
+            if (auto* cookie = jsDynamicCast<JSCookie*>(value)) {
                 auto* array = constructEmptyArray(exec, nullptr);
-                constructDataProperties(vm, exec, array, WebCore::getInternalProperties(vm, exec, formData));
+                constructDataProperties(vm, exec, array, WebCore::getInternalProperties(vm, exec, cookie));
+                RETURN_IF_EXCEPTION(scope, {});
+                return array;
+            }
+
+            if (auto* cookieMap = jsDynamicCast<JSCookieMap*>(value)) {
+                auto* array = constructEmptyArray(exec, nullptr);
+                constructDataProperties(vm, exec, array, WebCore::getInternalProperties(vm, exec, cookieMap));
                 RETURN_IF_EXCEPTION(scope, {});
                 return array;
             }

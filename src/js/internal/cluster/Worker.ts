@@ -1,7 +1,6 @@
 const EventEmitter = require("node:events");
 
 const ObjectFreeze = Object.freeze;
-const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
 const kEmptyObject = ObjectFreeze({ __proto__: null });
 
@@ -23,8 +22,7 @@ function Worker(options) {
     this.process.on("message", (message, handle) => this.emit("message", message, handle));
   }
 }
-Worker.prototype = {};
-ObjectSetPrototypeOf(Worker.prototype, EventEmitter.prototype);
+$toClass(Worker, "Worker", EventEmitter);
 
 Worker.prototype.kill = function () {
   this.destroy.$apply(this, arguments);

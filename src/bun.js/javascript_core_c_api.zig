@@ -8,12 +8,8 @@ const bun = @import("root").bun;
 const std = @import("std");
 const cpp = @import("./bindings/bindings.zig");
 const generic = opaque {
-    pub fn value(this: *const @This()) cpp.JSValue {
-        return @as(cpp.JSValue, @enumFromInt(@as(cpp.JSValue.Type, @bitCast(@intFromPtr(this)))));
-    }
-
-    pub inline fn bunVM(this: *@This()) *bun.JSC.VirtualMachine {
-        return this.ptr().bunVM();
+    pub fn value(this: *const generic) cpp.JSValue {
+        return @as(cpp.JSValue, @enumFromInt(@as(cpp.JSValueReprInt, @bitCast(@intFromPtr(this)))));
     }
 };
 pub const Private = anyopaque;
@@ -46,6 +42,7 @@ pub const kJSTypeNumber = @intFromEnum(JSType.kJSTypeNumber);
 pub const kJSTypeString = @intFromEnum(JSType.kJSTypeString);
 pub const kJSTypeObject = @intFromEnum(JSType.kJSTypeObject);
 pub const kJSTypeSymbol = @intFromEnum(JSType.kJSTypeSymbol);
+/// From JSValueRef.h:81
 pub const JSTypedArrayType = enum(c_uint) {
     kJSTypedArrayTypeInt8Array,
     kJSTypedArrayTypeInt16Array,
@@ -58,6 +55,8 @@ pub const JSTypedArrayType = enum(c_uint) {
     kJSTypedArrayTypeFloat64Array,
     kJSTypedArrayTypeArrayBuffer,
     kJSTypedArrayTypeNone,
+    kJSTypedArrayTypeBigInt64Array,
+    kJSTypedArrayTypeBigUint64Array,
     _,
 };
 pub const kJSTypedArrayTypeInt8Array = @intFromEnum(JSTypedArrayType.kJSTypedArrayTypeInt8Array);
@@ -163,7 +162,6 @@ pub const OpaqueJSPropertyNameAccumulator = struct_OpaqueJSPropertyNameAccumulat
 // This is a workaround for not receiving a JSException* object
 // This function lets us use the C API but returns a plain old JSValue
 // allowing us to have exceptions that include stack traces
-pub extern "c" fn JSObjectCallAsFunctionReturnValue(ctx: JSContextRef, object: cpp.JSValue, thisObject: cpp.JSValue, argumentCount: usize, arguments: [*c]const JSValueRef) cpp.JSValue;
 pub extern "c" fn JSObjectCallAsFunctionReturnValueHoldingAPILock(ctx: JSContextRef, object: JSObjectRef, thisObject: JSObjectRef, argumentCount: usize, arguments: [*c]const JSValueRef) cpp.JSValue;
 
 pub extern fn JSRemoteInspectorDisableAutoStart() void;

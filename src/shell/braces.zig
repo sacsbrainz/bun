@@ -4,8 +4,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Arena = std.heap.ArenaAllocator;
 const Allocator = std.mem.Allocator;
-const SmolStr = @import("../string_types.zig").SmolStr;
-const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
+const SmolStr = @import("../string.zig").SmolStr;
 
 /// Using u16 because anymore tokens than that results in an unreasonably high
 /// amount of brace expansion (like around 32k variants to expand)
@@ -66,7 +65,6 @@ pub fn StackStack(comptime T: type, comptime SizeType: type, comptime N: SizeTyp
         len: SizeType = 0,
 
         pub const Error = error{
-            StackEmpty,
             StackFull,
         };
 
@@ -159,7 +157,7 @@ pub fn expand(
     tokens: []Token,
     out: []std.ArrayList(u8),
     contains_nested: bool,
-) !void {
+) (error{StackFull} || ParserError)!void {
     var out_key_counter: u16 = 1;
     if (!contains_nested) {
         var expansions_table = try buildExpansionTableAlloc(allocator, tokens);
@@ -325,7 +323,7 @@ pub fn calculateVariantsAmount(tokens: []const Token) u32 {
     return count;
 }
 
-const ParserError = error{
+const ParserError = bun.OOM || error{
     UnexpectedToken,
 };
 
@@ -361,7 +359,7 @@ pub const Parser = struct {
         }
     }
 
-    fn parseAtom(self: *Parser) anyerror!?AST.Atom {
+    fn parseAtom(self: *Parser) ParserError!?AST.Atom {
         switch (self.advance()) {
             .open => {
                 const expansion_ptr = try self.parseExpansion();

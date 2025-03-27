@@ -18,29 +18,42 @@ pub const ResolveMessage = struct {
 
     pub usingnamespace JSC.Codegen.JSResolveMessage;
 
-    pub fn constructor(
-        globalThis: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) ?*ResolveMessage {
-        globalThis.throw("ResolveMessage is not constructable", .{});
-        return null;
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*ResolveMessage {
+        return globalThis.throw("ResolveMessage is not constructable", .{});
     }
 
     pub fn getCode(this: *ResolveMessage, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         switch (this.msg.metadata) {
             .resolve => |resolve| {
-                const label: []const u8 = brk: {
-                    if (resolve.import_kind.isCommonJS()) {
-                        break :brk "MODULE_NOT_FOUND";
-                    }
+                const code: []const u8 = brk: {
+                    const specifier = this.msg.metadata.resolve.specifier.slice(this.msg.data.text);
 
                     break :brk switch (resolve.import_kind) {
-                        .stmt, .dynamic => "ERR_MODULE_NOT_FOUND",
-                        else => "RESOLVE_ERROR",
+                        // Match Node.js error codes. CommonJS is historic
+                        // before they started prefixing with 'ERR_'
+                        .require => if (bun.strings.hasPrefixComptime(specifier, "node:"))
+                            break :brk "ERR_UNKNOWN_BUILTIN_MODULE"
+                        else
+                            break :brk "MODULE_NOT_FOUND",
+                        // require resolve does not have the UNKNOWN_BUILTIN_MODULE error code
+                        .require_resolve => "MODULE_NOT_FOUND",
+                        .stmt, .dynamic => if (bun.strings.hasPrefixComptime(specifier, "node:"))
+                            break :brk "ERR_UNKNOWN_BUILTIN_MODULE"
+                        else
+                            break :brk "ERR_MODULE_NOT_FOUND",
+
+                        .entry_point_run,
+                        .entry_point_build,
+                        .at,
+                        .at_conditional,
+                        .url,
+                        .internal,
+                        .composes,
+                        => "RESOLVE_ERROR",
                     };
                 };
 
-                var atom = bun.String.createAtomASCII(label);
+                var atom = bun.String.createAtomASCII(code);
                 defer atom.deref();
                 return atom.toJS(globalObject);
             },
@@ -65,26 +78,33 @@ pub const ResolveMessage = struct {
         return JSC.JSValue.jsNumber(@as(i32, 0));
     }
 
-    pub fn fmt(allocator: std.mem.Allocator, specifier: string, referrer: string, err: anyerror) !string {
+    pub fn fmt(allocator: std.mem.Allocator, specifier: string, referrer: string, err: anyerror, import_kind: bun.ImportKind) !string {
+        if (import_kind != .require_resolve and bun.strings.hasPrefixComptime(specifier, "node:")) {
+            // This matches Node.js exactly.
+            return try std.fmt.allocPrint(allocator, "No such built-in module: {s}", .{specifier});
+        }
         switch (err) {
             error.ModuleNotFound => {
                 if (strings.eqlComptime(referrer, "bun:main")) {
-                    return try std.fmt.allocPrint(allocator, "Module not found \"{s}\"", .{specifier});
+                    return try std.fmt.allocPrint(allocator, "Module not found '{s}'", .{specifier});
                 }
                 if (Resolver.isPackagePath(specifier) and !strings.containsChar(specifier, '/')) {
-                    return try std.fmt.allocPrint(allocator, "Cannot find package \"{s}\" from \"{s}\"", .{ specifier, referrer });
+                    return try std.fmt.allocPrint(allocator, "Cannot find package '{s}' from '{s}'", .{ specifier, referrer });
                 } else {
-                    return try std.fmt.allocPrint(allocator, "Cannot find module \"{s}\" from \"{s}\"", .{ specifier, referrer });
+                    return try std.fmt.allocPrint(allocator, "Cannot find module '{s}' from '{s}'", .{ specifier, referrer });
                 }
             },
             error.InvalidDataURL => {
-                return try std.fmt.allocPrint(allocator, "Cannot resolve invalid data URL \"{s}\" from \"{s}\"", .{ specifier, referrer });
+                return try std.fmt.allocPrint(allocator, "Cannot resolve invalid data URL '{s}' from '{s}'", .{ specifier, referrer });
+            },
+            error.InvalidURL => {
+                return try std.fmt.allocPrint(allocator, "Cannot resolve invalid URL '{s}' from '{s}'", .{ specifier, referrer });
             },
             else => {
                 if (Resolver.isPackagePath(specifier)) {
-                    return try std.fmt.allocPrint(allocator, "{s} while resolving package \"{s}\" from \"{s}\"", .{ @errorName(err), specifier, referrer });
+                    return try std.fmt.allocPrint(allocator, "{s} while resolving package '{s}' from '{s}'", .{ @errorName(err), specifier, referrer });
                 } else {
-                    return try std.fmt.allocPrint(allocator, "{s} while resolving \"{s}\" from \"{s}\"", .{ @errorName(err), specifier, referrer });
+                    return try std.fmt.allocPrint(allocator, "{s} while resolving '{s}' from '{s}'", .{ @errorName(err), specifier, referrer });
                 }
             },
         }
@@ -92,8 +112,7 @@ pub const ResolveMessage = struct {
 
     pub fn toStringFn(this: *ResolveMessage, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         const text = std.fmt.allocPrint(default_allocator, "ResolveMessage: {s}", .{this.msg.data.text}) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
+            return globalThis.throwOutOfMemoryValue();
         };
         var str = ZigString.init(text);
         str.setOutputEncoding();
@@ -111,7 +130,7 @@ pub const ResolveMessage = struct {
         this: *ResolveMessage,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         return this.toStringFn(globalThis);
     }
 
@@ -119,15 +138,15 @@ pub const ResolveMessage = struct {
         this: *ResolveMessage,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
-        const args_ = callframe.arguments(1);
+    ) bun.JSError!JSC.JSValue {
+        const args_ = callframe.arguments_old(1);
         const args = args_.ptr[0..args_.len];
         if (args.len > 0) {
             if (!args[0].isString()) {
                 return JSC.JSValue.jsNull();
             }
 
-            const str = args[0].getZigString(globalThis);
+            const str = try args[0].getZigString(globalThis);
             if (str.eqlComptime("default") or str.eqlComptime("string")) {
                 return this.toStringFn(globalThis);
             }
@@ -140,9 +159,9 @@ pub const ResolveMessage = struct {
         this: *ResolveMessage,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         var object = JSC.JSValue.createEmptyObject(globalThis, 7);
-        object.put(globalThis, ZigString.static("name"), ZigString.init("ResolveMessage").toJS(globalThis));
+        object.put(globalThis, ZigString.static("name"), bun.String.static("ResolveMessage").toJS(globalThis));
         object.put(globalThis, ZigString.static("position"), this.getPosition(globalThis));
         object.put(globalThis, ZigString.static("message"), this.getMessage(globalThis));
         object.put(globalThis, ZigString.static("level"), this.getLevel(globalThis));
