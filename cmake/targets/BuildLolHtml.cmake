@@ -4,7 +4,7 @@ register_repository(
   REPOSITORY
     cloudflare/lol-html
   COMMIT
-    67f1d4ffd6b74db7e053fb129dcce620193c180d
+    27e75567b0226c1c1d31bd9b79769eb7b653f392
 )
 
 set(LOLHTML_CWD ${VENDOR_PATH}/lolhtml/c-api)
